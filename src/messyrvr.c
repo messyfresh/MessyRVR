@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <robotcontrol.h> // includes ALL Robot Control subsystems
 #include "../utils/log/src/log.h"
+#include "rc_check_battery.h"
 
 // function declarations
 void on_pause_press();
@@ -37,14 +38,14 @@ int main()
 
 	// start signal handler so we can exit cleanly
 	if(rc_enable_signal_handler()==-1){
-		fprintf(stderr,"ERROR: failed to start signal handler\n");
+		log_error("ERROR: Failed to start signal handler");
 		return -1;
 	}
 
 	// initialize pause button
 	if(rc_button_init(RC_BTN_PIN_PAUSE, RC_BTN_POLARITY_NORM_HIGH,
 						RC_BTN_DEBOUNCE_DEFAULT_US)){
-		fprintf(stderr,"ERROR: failed to initialize pause button\n");
+		log_error("ERROR: Failed to initialize pause button");
 		return -1;
 	}
 
@@ -58,8 +59,10 @@ int main()
 	rc_make_pid_file();
 
 
-	printf("\nPress and release pause button to turn green LED on and off\n");
-	printf("hold pause button down for 2 seconds to exit\n");
+	log_info("Press and release pause button to set the receiver into bind mode");
+	log_info("Hold pause button down for 2 seconds to exit");
+
+	//rc_check_battery();
 
 	// Keep looping until state changes to EXITING
 	rc_set_state(RUNNING);
@@ -94,7 +97,8 @@ void on_pause_release()
 {
 	if(rc_get_state()==RUNNING)	rc_set_state(PAUSED);
 	else if(rc_get_state()==PAUSED)	rc_set_state(RUNNING);
-	return;
+	//rc_dsm_bind_routine();
+    return;
 }
 
 /**
@@ -112,7 +116,7 @@ void on_pause_press()
 		rc_usleep(us_wait/samples);
 		if(rc_button_get_state(RC_BTN_PIN_PAUSE)==RC_BTN_STATE_RELEASED) return;
 	}
-	printf("long press detected, shutting down\n");
+	log_info("Long press detected, shutting down");
 	rc_set_state(EXITING);
 	return;
 }
