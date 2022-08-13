@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <robotcontrol.h> // includes ALL Robot Control subsystems
 #include "./utils/log/log.h"
-#include "rc_check_battery.h"
+#include "./battery/rc_check_battery.h"
 
 // function declarations
 void on_pause_press();
