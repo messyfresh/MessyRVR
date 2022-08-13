@@ -5,118 +5,95 @@
  */
 
 #include <stdio.h>
-#include <robotcontrol.h> // includes ALL Robot Control subsystems
+#include <string.h>
+
+// Linux headers
+#include <fcntl.h> // Contains file controls like O_RDWR
+#include <errno.h> // Error integer and strerror() function
+#include <termios.h> // Contains POSIX terminal control definitions
+#include <unistd.h> // write(), read(), close()
+
+#include "./io/uart.h"
+#include "./rc/dsm.h"
 #include "./utils/log/log.h"
 #include "./battery/rc_check_battery.h"
 
-// function declarations
-void on_pause_press();
-void on_pause_release();
 
-
-/**
- * This template contains these critical components
- * - ensure no existing instances are running and make new PID file
- * - start the signal handler
- * - initialize subsystems you wish to use
- * - while loop that checks for EXITING condition
- * - cleanup subsystems at the end
- *
- * @return     0 during normal operation, -1 on error
- */
 int main()
 {
 	// Start logging functions
 	log_info("Starting %s", "MessyRVR");
 
-	// make sure another instance isn't running
-	// if return value is -3 then a background process is running with
-	// higher privaledges and we couldn't kill it, in which case we should
-	// not continue or there may be hardware conflicts. If it returned -4
-	// then there was an invalid argument that needs to be fixed.
-	if(rc_kill_existing_process(2.0)<-2) return -1;
+	// Open the serial port. Change device path as needed (currently set to an standard FTDI USB-UART cable type device)
+	int serial_port = open("/dev/ttyO4", O_RDWR);
 
-	// start signal handler so we can exit cleanly
-	if(rc_enable_signal_handler()==-1){
-		log_error("ERROR: Failed to start signal handler");
-		return -1;
+	// Create new termios struct, we call it 'tty' for convention
+	struct termios tty;
+
+	// Read in existing settings, and handle any error
+	if(tcgetattr(serial_port, &tty) != 0) {
+		printf("Error %i from tcgetattr: %s\n", errno, strerror(errno));
+		return 1;
 	}
 
-	// initialize pause button
-	if(rc_button_init(RC_BTN_PIN_PAUSE, RC_BTN_POLARITY_NORM_HIGH,
-						RC_BTN_DEBOUNCE_DEFAULT_US)){
-		log_error("ERROR: Failed to initialize pause button");
-		return -1;
+	tty.c_cflag &= ~PARENB; // Clear parity bit, disabling parity (most common)
+	tty.c_cflag &= ~CSTOPB; // Clear stop field, only one stop bit used in communication (most common)
+	tty.c_cflag &= ~CSIZE; // Clear all bits that set the data size 
+	tty.c_cflag |= CS8; // 8 bits per byte (most common)
+	tty.c_cflag &= ~CRTSCTS; // Disable RTS/CTS hardware flow control (most common)
+	tty.c_cflag |= CREAD | CLOCAL; // Turn on READ & ignore ctrl lines (CLOCAL = 1)
+
+	tty.c_lflag &= ~ICANON;
+	tty.c_lflag &= ~ECHO; // Disable echo
+	tty.c_lflag &= ~ECHOE; // Disable erasure
+	tty.c_lflag &= ~ECHONL; // Disable new-line echo
+	tty.c_lflag &= ~ISIG; // Disable interpretation of INTR, QUIT and SUSP
+	tty.c_iflag &= ~(IXON | IXOFF | IXANY); // Turn off s/w flow ctrl
+	tty.c_iflag &= ~(IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL); // Disable any special handling of received bytes
+
+	tty.c_oflag &= ~OPOST; // Prevent special interpretation of output bytes (e.g. newline chars)
+	tty.c_oflag &= ~ONLCR; // Prevent conversion of newline to carriage return/line feed
+	// tty.c_oflag &= ~OXTABS; // Prevent conversion of tabs to spaces (NOT PRESENT ON LINUX)
+	// tty.c_oflag &= ~ONOEOT; // Prevent removal of C-d chars (0x004) in output (NOT PRESENT ON LINUX)
+
+	tty.c_cc[VTIME] = 10;    // Wait for up to 1s (10 deciseconds), returning as soon as any data is received.
+	tty.c_cc[VMIN] = 0;
+
+	// Set in/out baud rate to be 9600
+	cfsetispeed(&tty, B115200);
+	cfsetospeed(&tty, B115200);
+
+	// Save tty settings, also checking for error
+	if (tcsetattr(serial_port, TCSANOW, &tty) != 0) {
+		printf("Error %i from tcsetattr: %s\n", errno, strerror(errno));
+		return 1;
 	}
 
-	// Assign functions to be called when button events occur
-	rc_button_set_callbacks(RC_BTN_PIN_PAUSE,on_pause_press,on_pause_release);
+	// Allocate memory for read buffer, set size according to your needs
+	char read_buf [16];
 
-	// make PID file to indicate your project is running
-	// due to the check made on the call to rc_kill_existing_process() above
-	// we can be fairly confident there is no PID file already and we can
-	// make our own safely.
-	rc_make_pid_file();
+	// Normally you wouldn't do this memset() call, but since we will just receive
+	// ASCII data for this example, we'll set everything to 0 so we can
+	// call printf() easily.
+	memset(&read_buf, '\0', sizeof(read_buf));
 
+	// Read bytes. The behaviour of read() (e.g. does it block?,
+	// how long does it block for?) depends on the configuration
+	// settings above, specifically VMIN and VTIME
+	int num_bytes = read(serial_port, &read_buf, sizeof(read_buf));
 
-	log_info("Press and release pause button to set the receiver into bind mode");
-	log_info("Hold pause button down for 2 seconds to exit");
-
-	//rc_check_battery();
-
-	// Keep looping until state changes to EXITING
-	rc_set_state(RUNNING);
-	while(rc_get_state()!=EXITING){
-		// do things based on the state
-		if(rc_get_state()==RUNNING){
-			rc_led_set(RC_LED_GREEN, 1);
-			rc_led_set(RC_LED_RED, 0);
-		}
-		else{
-			rc_led_set(RC_LED_GREEN, 0);
-			rc_led_set(RC_LED_RED, 1);
-		}
-		// always sleep at some point
-		rc_usleep(100000);
+	// n is the number of bytes read. n may be 0 if no bytes were received, and can also be -1 to signal an error.
+	if (num_bytes < 0) {
+		printf("Error reading: %s", strerror(errno));
+		return 1;
 	}
 
-	// turn off LEDs and close file descriptors
-	rc_led_set(RC_LED_GREEN, 0);
-	rc_led_set(RC_LED_RED, 0);
-	rc_led_cleanup();
-	rc_button_cleanup();	// stop button handlers
-	rc_remove_pid_file();	// remove pid file LAST
-	return 0;
-}
+	// Here we assume we received ASCII data, but you might be sending raw bytes (in that case, don't try and
+	// print it to the screen like this!)
+	printf("Read %i bytes. Received message: %s", num_bytes, read_buf);
 
+	close(serial_port);
+	return 0; // success
 
-/**
- * Make the Pause button toggle between paused and running states.
- */
-void on_pause_release()
-{
-	if(rc_get_state()==RUNNING)	rc_set_state(PAUSED);
-	else if(rc_get_state()==PAUSED)	rc_set_state(RUNNING);
-	//rc_dsm_bind_routine();
-    return;
-}
-
-/**
-* If the user holds the pause button for 2 seconds, set state to EXITING which
-* triggers the rest of the program to exit cleanly.
-**/
-void on_pause_press()
-{
-	int i;
-	const int samples = 100; // check for release 100 times in this period
-	const int us_wait = 2000000; // 2 seconds
-
-	// now keep checking to see if the button is still held down
-	for(i=0;i<samples;i++){
-		rc_usleep(us_wait/samples);
-		if(rc_button_get_state(RC_BTN_PIN_PAUSE)==RC_BTN_STATE_RELEASED) return;
-	}
-	log_info("Long press detected, shutting down");
-	rc_set_state(EXITING);
-	return;
+	// TODO: We are reading the receiver's serial data, but we need to define a structure and process it
 }
