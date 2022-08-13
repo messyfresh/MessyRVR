@@ -6,7 +6,7 @@
 
 #include <stdio.h>
 #include <robotcontrol.h> // includes ALL Robot Control subsystems
-#include "../utils/log/src/log.h"
+#include "./utils/log/log.h"
 #include "rc_check_battery.h"
 
 // function declarations

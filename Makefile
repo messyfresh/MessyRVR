@@ -13,8 +13,7 @@ UTILDIR		:= utils
 
 INCLUDES	:= $(wildcard *.h)
 SOURCES		:= $(shell find $(SRCDIR) -name '*.c')
-UTILS		:= $(shell find $(UTILDIR) -name '*.c')
-OBJECTS		:= $(SOURCES:$%.c=$%.o) $(UTILS:$%.c=$%.o)
+OBJECTS		:= $(SOURCES:$%.c=$%.o)
 
 WFLAGS		:= -Wall -Wextra -Werror=float-equal -Wuninitialized -Wunused-variable -Wdouble-promotion
 CFLAGS		:= -g -c -Wall 
